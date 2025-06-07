@@ -1041,7 +1041,7 @@
                     </div>
                     <div class="import-zone-subtext">Ou mise à jour auto depuis S3</div>
                 </div>
-                <button class="btn btn-primary" onclick="loadFromS3()" style="height: fit-content;">
+                <button class="btn btn-primary" onclick="loadFromGoogleSheets()" style="height: fit-content;">
                     <span class="icon-download"></span> Forcer la mise à jour
                 </button>
                 <button class="btn btn-secondary" onclick="clearDatabase()" style="height: fit-content;">
@@ -1231,7 +1231,13 @@
         let properties = JSON.parse(localStorage.getItem('immoTransacProperties')) || [];
         let currentProperty = null;
         let currentImageIndex = 0;
-        const EXCEL_URL = 'https://d3vd8gcglemad3.cloudfront.net/FORMULAIRE/bien+agence+immo+transac.xlsx';
+        
+        // URLs Google Sheets (format CSV)
+        const SHEETS_URLS = {
+            appartements: 'https://docs.google.com/spreadsheets/d/12zz5XMcwEtnNvUTQitRIVpBeGAhiF3JZjMagkz7ifmg/export?format=csv',
+            // maisons: '', // À ajouter
+            // terrains: '' // À ajouter
+        };
 
         // Charger les données au démarrage
         window.addEventListener('DOMContentLoaded', async () => {
@@ -1248,49 +1254,32 @@
                 showNotification(`✅ ${properties.length} biens chargés depuis le cache`);
             }
             
-            // Puis vérifier si on doit mettre à jour depuis S3
+            // Puis vérifier si on doit mettre à jour depuis Google Sheets
             if (!lastUpdate || (now - parseInt(lastUpdate)) > oneHour || properties.length === 0) {
-                await loadFromS3();
+                await loadFromGoogleSheets();
             }
         });
 
-        // Fonction pour charger depuis S3
-        async function loadFromS3() {
+        // Fonction pour charger depuis Google Sheets
+        async function loadFromGoogleSheets() {
             const loader = document.getElementById('loader');
             loader.classList.add('active');
             
             try {
-                showNotification('🔄 Mise à jour des données depuis le serveur...');
+                showNotification('🔄 Mise à jour des données depuis Google Sheets...');
                 
-                const response = await fetch(EXCEL_URL);
-                const arrayBuffer = await response.arrayBuffer();
-                const data = new Uint8Array(arrayBuffer);
-                const workbook = XLSX.read(data, { type: 'array' });
-                
-                // Réinitialiser les propriétés pour éviter les doublons
+                // Réinitialiser les propriétés
                 properties = [];
                 
-                // Lire toutes les feuilles
-                workbook.SheetNames.forEach(sheetName => {
-                    const sheet = workbook.Sheets[sheetName];
-                    const jsonData = XLSX.utils.sheet_to_json(sheet);
-                    
-                    // Déterminer le type selon le nom de la feuille
-                    let defaultType = 'appartement';
-                    if (sheetName.toLowerCase().includes('maison')) {
-                        defaultType = 'maison';
-                    } else if (sheetName.toLowerCase().includes('terrain')) {
-                        defaultType = 'terrain';
-                    }
-                    
-                    // Transformer chaque ligne en propriété
-                    jsonData.forEach(row => {
-                        const property = transformRowToProperty(row, defaultType);
-                        if (property) {
-                            properties.push(property);
-                        }
-                    });
-                });
+                // Charger les appartements
+                if (SHEETS_URLS.appartements) {
+                    const response = await fetch(SHEETS_URLS.appartements);
+                    const csvText = await response.text();
+                    const appartements = parseCSV(csvText, 'appartement');
+                    properties.push(...appartements);
+                }
+                
+                // TODO: Ajouter maisons et terrains quand vous aurez les liens
                 
                 // Sauvegarder dans localStorage
                 localStorage.setItem('immoTransacProperties', JSON.stringify(properties));
@@ -1302,18 +1291,43 @@
                 document.getElementById('statsContainer').style.display = 'grid';
                 
                 // Notification de succès
-                showNotification(`✅ ${properties.length} biens mis à jour depuis le serveur !`);
+                showNotification(`✅ ${properties.length} biens mis à jour depuis Google Sheets !`);
                 
             } catch (error) {
-                console.error('Erreur lors du chargement depuis S3:', error);
+                console.error('Erreur lors du chargement depuis Google Sheets:', error);
                 if (properties.length === 0) {
-                    showNotification('❌ Impossible de charger les données depuis le serveur', 'error');
+                    showNotification('❌ Impossible de charger les données depuis Google Sheets', 'error');
                 } else {
                     showNotification('⚠️ Utilisation des données en cache', 'warning');
                 }
             } finally {
                 loader.classList.remove('active');
             }
+        }
+
+        // Parser le CSV
+        function parseCSV(csvText, defaultType) {
+            const lines = csvText.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+            const results = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                
+                const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+                const row = {};
+                
+                headers.forEach((header, index) => {
+                    row[header] = values[index] || '';
+                });
+                
+                const property = transformRowToProperty(row, defaultType);
+                if (property) {
+                    results.push(property);
+                }
+            }
+            
+            return results;
         }
 
         // Gestionnaire de fichiers
@@ -2004,10 +2018,10 @@
         console.log(`
         🏠 IMMO TRANSAC - Outil de Recherche Premium 🏠
         
-        📊 Chargement automatique depuis S3:
-        - URL: ${EXCEL_URL}
-        - Mise à jour automatique toutes les heures
-        - Cache local pour performance optimale
+        📊 Chargement automatique depuis Google Sheets:
+        - Appartements : ✅ Configuré
+        - Maisons : ⏳ En attente du lien
+        - Terrains : ⏳ En attente du lien
         
         🔄 Options de mise à jour:
         1. Automatique au démarrage (si > 1h depuis dernière MAJ)
@@ -2016,13 +2030,13 @@
         
         💾 Gestion des données:
         - Sauvegarde automatique en cache local
-        - Synchronisation avec S3
+        - Synchronisation avec Google Sheets
         - API disponible via window.immoAPI
         
         ⚡ Performance:
         - Chargement depuis cache = instantané
         - Mise à jour en arrière-plan
-        - Pas de téléchargement inutile
+        - Pas de problème CORS avec Google Sheets !
         `);
     </script>
 </body>
